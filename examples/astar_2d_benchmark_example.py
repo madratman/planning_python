@@ -8,6 +8,8 @@ Date: October 6, 2017
 import argparse
 from collections import defaultdict
 import json
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -25,7 +27,14 @@ x_lims = [0, 200]
 y_lims = [0, 200]
 
 env_params = {'x_lims': x_lims, 'y_lims': y_lims}
-lattice_params = {'x_lims': x_lims, 'y_lims': y_lims, 'resolution': [10, 10], 'origin': (0, 0), 'rotation': 0, 'connectivity': 'eight_connected', 'path_resolution': 1}
+lattice_params = {'x_lims': x_lims, \
+                    'y_lims': y_lims, \
+                    'resolution': [1, 1], \
+                    'origin': (0, 0), \
+                    'rotation': 0, \
+                    'connectivity': 'eight_connected', \
+                    'path_resolution': 1}
+
 cost_fn = PathLengthNoAng()
 heuristic_fn = EuclideanHeuristicNoAng()
 lattice = XYAnalyticLattice(lattice_params)
@@ -34,55 +43,58 @@ planner = Astar()
 start_n = lattice.state_to_node((0,0))
 goal_n = lattice.state_to_node((199, 199))
 
-def run_benchmark(database_folders=[], num_envs=1):
-  global env_params, lattice_params, cost_fn, heuristic_fn, lattice, planner, start_n, goal_n
+def run_benchmark(folder):
+    global env_params, lattice_params, cost_fn, heuristic_fn, lattice, planner, start_n, goal_n
      
-  # h_weight_list = range(1, 100, 10)
-  # h_weight_list = [0] + h_weight_list
-  h_weight_list = [0]
-  e = Env2D()
-  print('Running benchmark')
+    # h_weight_list = range(1, 100, 10)
+    # h_weight_list = [0] + h_weight_list
+    h_weight_list = [0]
+    e = Env2D()
+    print('Running benchmark')
+    subdirs = sorted(os.listdir(os.path.abspath(folder)))
 
-  for folder in database_folders:
-    results= defaultdict(list)
-    
-    for i in range(num_envs):
-      curr_env_file = os.path.join(os.path.abspath(folder), str(i)+'.png')
-      e.initialize(curr_env_file, env_params)
-    
-      for h_weight in h_weight_list: 
-        prob_params = {'heuristic_weight': h_weight}
-        prob = PlanningProblem(prob_params)
-        prob.initialize(e, lattice, cost_fn, heuristic_fn, start_n, goal_n, visualize=True)
-        planner.initialize(prob) 
-        path, path_cost, num_expansions, plan_time, came_from, cost_so_far, c_obs = planner.plan()
-        results[h_weight].append((num_expansions,plan_time))
-        planner.clear_planner() #clear the planner in the end
-    
-    env_name = os.path.split(os.path.split(os.path.abspath(folder))[0])[1]
-    output_file_1 = "astar_2d_benchmark.json" 
-    json.dump(results, open(os.path.join(os.path.abspath("../benchmark_results/astar/"+env_name), output_file_1), 'w'), sort_keys=True)
-    output_file_2 = "astar_2d_enchmark_averaged.json"
-    
-    #Calculate average expansions
-    avg_results = defaultdict(list)
-    for k,v in results.iteritems():
-      avg_expansions = 0
-      avg_time = 0
-      for exp, t in v:
-        avg_expansions += exp
-        avg_time += t
-      avg_expansions /= num_envs
-      avg_time /= num_envs
-      avg_results[k] = (avg_expansions, avg_time)
-    json.dump(avg_results, open(os.path.join(os.path.abspath("../benchmark_results/astar/"+env_name), output_file_2), 'w'), sort_keys=True)   
+    for subdir in subdirs:
+        curr_env_file = os.path.join(folder, subdir,'map.png')
+        # print curr_env_file
+        e.initialize(curr_env_file, env_params)
 
+        for h_weight in h_weight_list:
+            prob_params = {'heuristic_weight': h_weight}
+            prob = PlanningProblem(prob_params)
+            prob.initialize(e, lattice, cost_fn, heuristic_fn, start_n, goal_n, visualize=False)
+            planner.initialize(prob) 
+            path, path_cost, num_expansions, plan_time, came_from, cost_so_far, c_obs = planner.plan()
+            if len(path)==0:
+                print "no solution for ", os.path.join(folder, subdir,'map.png')
+                continue
+            # path has duplicates due to transitions 
+            path_to_save = [each_transition[0] for each_transition in path]
+            path_to_save.append(path[-1][1])
+            path_to_save_npy = np.asarray(path_to_save)
+            # print path
+            # print path_to_save_npy    
+            path_to_save_npy.dump(os.path.join(folder, subdir, 'path.npy'))
+
+            # results[h_weight].append((num_expansions,plan_time))
+            planner.clear_planner() #clear the planner in the end
+            e.initialize_plot(start_n, goal_n)
+            e.plot_path(path)
+
+            plt.gca().set_axis_off()
+            plt.subplots_adjust(top = 1, bottom = 0, right = 1, left = 0, 
+            			  hspace = 0, wspace = 0)
+            plt.margins(0,0)
+            plt.gca().xaxis.set_major_locator(plt.NullLocator())
+            plt.gca().yaxis.set_major_locator(plt.NullLocator())
+            plt.savefig(os.path.join(folder, subdir, 'solution.png'), bbox_inches = 'tight', pad_inches = 0)
+            plt.close()
+            # plt.show()
 
 if __name__ == "__main__":
-  parser = argparse.ArgumentParser()
-  parser.add_argument('--database_folders', nargs='+', required=True)
-  parser.add_argument('--num_envs', type=int)
-  args = parser.parse_args()
-  #Run the benchmark and save results
-  run_benchmark(args.database_folders, args.num_envs)
-  # print(results)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--database_folders', required=True)
+    args = parser.parse_args()
+    #Run the benchmark and save results
+    run_benchmark(args.database_folders)
+    # print(results)
+
